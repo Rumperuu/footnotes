@@ -1,0 +1,87 @@
+# This workflow handles GitHub releases and pre-releases.
+# It builds the Plugin, zips up an archive to add to the
+# release entry on GitHub and (in the case of a full release)
+# pushes the release to the WP Plugin Directory SVN repo.
+
+name: Release Handler
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build_plugin:
+    name: Build the Plugin for pre-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: |
+          composer install --no-dev --optimize-autoloader --no-progress
+          
+      - name: Build Plugin
+        run: |
+          composer run build
+
+      - name: Rename Plugin folder
+        run: |
+          mv dist/ footnotes/
+          
+      - name: Upload Plugin artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: footnotes-${{ github.event.release.tag_name }}
+          path: footnotes
+
+  create_archive:
+    name: Create an archive for the release and add it to GitHub
+    runs-on: ubuntu-latest
+    needs: build_plugin
+
+    steps:
+      - name: Download Plugin artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: footnotes-${{ github.event.release.tag_name }}
+
+      - name: Create release archive
+        uses: montudor/action-zip@v0.1.0
+        with:
+          args: zip -X -r footnotes-${{ github.event.release.tag_name }}.zip footnotes
+
+      #- name: Upload archive as artifact
+      #  uses: actions/upload-artifact@v2
+      #  with:
+      #      name: footnotes-${{ github.event.release.tag_name }}
+      #      path: footnotes-${{ github.event.release.tag_name }}.zip
+         
+      - name: Upload archive to release
+        uses: JasonEtco/upload-to-release@master
+        with:
+          args: footnotes-${{ github.event.release.tag_name }}.zip application/zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release_to_svn:
+    name: Push the release to the WordPress Plugin Directory repo.
+    if: "!github.event.release.prerelease"
+    runs-on: ubuntu-latest
+    needs: create_archive
+
+    steps:
+      - name: Download Plugin artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: footnotes-${{ github.event.release.tag_name }}
+
+      - name: Deploy release to Wordpress.org 
+        id: deploy
+        uses: 10up/action-wordpress-plugin-deploy@stable
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: footnotes/branches/svn-test
+          ASSETS_DIR: assets
